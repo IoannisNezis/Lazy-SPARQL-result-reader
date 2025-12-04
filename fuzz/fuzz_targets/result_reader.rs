@@ -1,5 +1,5 @@
 #![no_main]
-use lazy_sparql_result_reader::{Parser, sparql::SparqlResult};
+use lazy_sparql_result_reader::{parser::Parser, sparql::SparqlResult};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|result: SparqlResult| {
@@ -9,7 +9,7 @@ fuzz_target!(|result: SparqlResult| {
     let mut parser = Parser::new(2);
     for chr in input.chars() {
         parser
-            .read_char(chr, |_| Ok(()))
+            .read_char(chr, |_| {})
             .expect("Input should be valid");
     }
 });
