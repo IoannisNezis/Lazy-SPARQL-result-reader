@@ -14,28 +14,61 @@ It reads streamed SPARQL query results and calls a callback for each parsed batc
 
 ---
 
-## Installation
-
-Install via npm:
-
-```bash
-npm install lazy-sparql-result-reader
-```
 
 ## Usage Example
 
+### 1. Install dependencies
+
+```bash
+npm install  lazy-sparql-result-reader vite @vitejs/plugin-wasm
+```
+
+### 2. Configure Vite for WASM
+
+Create or update vite.config.ts:
+
+```bash
+import { defineConfig } from 'vite';
+import wasm from '@vitejs/plugin-wasm';
+
+export default defineConfig({
+  plugins: [wasm()],
+});
+```
+
+This allows Vite to correctly load WebAssembly modules.
+
+### 3. Use the parser in your app
+
 ```ts
-import init, { read } from "sparql-stream-parser";
+import init, { read } from "lazy-sparql-result-reader?init";
 
 // Initialize the WASM module
 await init();
 
-// Suppose you have a ReadableStream of SPARQL results
-const stream: ReadableStream = getSparqlStream();
-
-// Process the stream with a callback
-await read(stream, 100, (bindings) => {
-    console.log("Received batch:", bindings);
+fetch("https://qlever.dev/api/wikidata", {
+  method: 'POST',
+  headers: {
+    "Accept": "application/sparql-results+json",
+    "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+  },
+  body: new URLSearchParams({
+    query: "SELECT * {?s ?p ?o} LIMIT 1000",
+  })
+})
+.then(async response => {
+  if (!response.ok) {
+    throw new Error(`SPARQL request failed: ${response.status}`);
+  }
+  const stream = response.body; // ReadableStream of the SPARQL JSON results
+  if (!stream) throw new Error("Response has no body stream");
+  // Parse the streamed results with the WASM parser
+  await read(stream, 100, (bindings) => {
+    console.log("Received batch of bindings:", bindings);
+  });
+})
+.catch((err) => {
+  console.error("Error fetching or parsing SPARQL results:", err);
 });
 ```
 
