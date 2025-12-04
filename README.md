@@ -6,6 +6,9 @@
     <a href="https://www.npmjs.com/package/lazy-sparql-result-reader">
         <img alt="npm" src="https://img.shields.io/npm/v/lazy-sparql-result-reader" />
     </a>
+    <a href="https://crates.io/crates/lazy-sparql-result-reader">
+        <img alt="crates.io" src="https://img.shields.io/crates/v/lazy-sparql-result-reader.svg" />
+    </a>
 </div>
 
 A fast SPARQL results parser for JavaScript and TypeScript, compiled from Rust via WebAssembly.  
