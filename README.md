@@ -1,4 +1,12 @@
-# lazy-sparql-result-reader
+<h1 align="center">
+  lazy-sparql-result-reader
+</h1>
+
+<div align="center">
+    <a href="https://www.npmjs.com/package/lazy-sparql-result-reader">
+        <img alt="npm" src="https://img.shields.io/npm/v/lazy-sparql-result-reader" />
+    </a>
+</div>
 
 A fast SPARQL results parser for JavaScript and TypeScript, compiled from Rust via WebAssembly.  
 It reads streamed SPARQL query results and calls a callback for each parsed batch of bindings.
