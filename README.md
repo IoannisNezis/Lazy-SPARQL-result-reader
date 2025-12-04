@@ -80,6 +80,16 @@ fetch("https://qlever.dev/api/wikidata", {
 });
 ```
 
+## Notes
+
+- The **first callback invocation** contains the **SPARQL head**, i.e., the variable names in the result set.
+- Subsequent callback invocations contain batches of bindings as they are parsed.
+- `batch_size` controls how many bindings are buffered before each callback.
+- Ensure your environment supports **ReadableStream** (modern browsers or Node.js >= 18).
+
+This setup allows your JS/TS application to process **streaming SPARQL results** efficiently,  
+with immediate access to the head and incremental batches of bindings.
+
 ## License
 
 This project is licensed under the **MIT** License.
