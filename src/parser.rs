@@ -20,8 +20,8 @@ impl Parser {
     }
 
     /// Returins the remaining bindings, consuming the parser.
-    pub fn flush(self) -> ParsedChunk {
-        ParsedChunk::Bindings(self.binding_buffer)
+    pub fn flush(self) -> Option<ParsedChunk> {
+        (!self.binding_buffer.is_empty()).then_some(ParsedChunk::Bindings(self.binding_buffer))
     }
 }
 
