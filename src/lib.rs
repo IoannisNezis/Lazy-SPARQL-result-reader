@@ -2,7 +2,6 @@ pub mod sparql;
 
 use crate::sparql::{Binding, Header};
 use js_sys::{Function, Uint8Array};
-use serde::Serialize;
 use std::panic;
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
 use web_sys::{ReadableStream, ReadableStreamDefaultReader};
@@ -68,14 +67,14 @@ impl Parser {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ScannerState {
     ReadingHead,
     SearchingBindings,
     SearchingBinding,
     ReadingBinding(u8),
-    ReadingString(u8),
-    ReadingStringEscaped(u8),
+    ReadingString(Box<ScannerState>),
+    ReadingStringEscaped(Box<ScannerState>),
     Done,
 }
 
@@ -85,8 +84,8 @@ impl Parser {
         F: Fn(&Vec<Binding>) -> Result<(), JsValue>,
     {
         self.input_buffer.push(chr);
-        println!("{:?}", (chr, &self.scanner_state));
-        match (chr, &self.scanner_state) {
+        let current_state = self.scanner_state.clone();
+        match (chr, current_state) {
             ('}', ScannerState::ReadingHead) => {
                 self.input_buffer.push('}');
                 let header: Header = serde_json::from_str(&self.input_buffer).unwrap();
@@ -96,7 +95,6 @@ impl Parser {
                 self.scanner_state = ScannerState::SearchingBindings;
             }
             ('}', ScannerState::ReadingBinding(1)) => {
-                println!("{}", self.input_buffer);
                 let binding: Binding = serde_json::from_str(&self.input_buffer).unwrap();
                 // .map_err(|err| JsValue::from_str(&format!("JSON parse error: {err}")))?;
                 self.binding_buffer.push(binding);
@@ -124,17 +122,18 @@ impl Parser {
             ('}', ScannerState::ReadingBinding(depth)) => {
                 self.scanner_state = ScannerState::ReadingBinding(depth - 1);
             }
-            ('"', ScannerState::ReadingBinding(depth)) => {
-                self.scanner_state = ScannerState::ReadingString(*depth);
+            ('"', ScannerState::ReadingBinding(_) | ScannerState::ReadingHead) => {
+                self.scanner_state =
+                    ScannerState::ReadingString(Box::new(self.scanner_state.clone()));
             }
-            ('"', ScannerState::ReadingString(depth)) => {
-                self.scanner_state = ScannerState::ReadingBinding(*depth);
+            ('"', ScannerState::ReadingString(prev_state)) => {
+                self.scanner_state = *prev_state;
             }
-            ('\\', ScannerState::ReadingString(depth)) => {
-                self.scanner_state = ScannerState::ReadingStringEscaped(*depth);
+            ('\\', ScannerState::ReadingString(prev_state)) => {
+                self.scanner_state = ScannerState::ReadingStringEscaped(prev_state);
             }
-            ('"', ScannerState::ReadingStringEscaped(depth)) => {
-                self.scanner_state = ScannerState::ReadingString(*depth);
+            (_, ScannerState::ReadingStringEscaped(prev_state)) => {
+                self.scanner_state = ScannerState::ReadingString(prev_state);
             }
             (']', ScannerState::SearchingBinding) => {
                 self.input_buffer.clear();
