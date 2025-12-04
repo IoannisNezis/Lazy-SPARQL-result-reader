@@ -1,46 +1,11 @@
+pub mod sparql;
+
+use crate::sparql::{Binding, Header};
 use js_sys::{Function, Uint8Array};
-use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, panic};
+use serde::Serialize;
+use std::panic;
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
 use web_sys::{ReadableStream, ReadableStreamDefaultReader};
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Header {
-    head: Head,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Head {
-    vars: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Binding(HashMap<String, RDFValue>);
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum RDFValue {
-    Uri {
-        value: String,
-    },
-    Literal {
-        value: String,
-        #[serde(rename = "xml:lang", skip_serializing_if = "Option::is_none")]
-        lang: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        datatype: Option<String>,
-    },
-    Bnode {
-        value: String,
-    },
-}
-
-enum ScannerState {
-    ReadingHead,
-    SearchingBindings,
-    SearchingBinding,
-    ReadingBinding(u8),
-}
 
 #[wasm_bindgen]
 pub async fn read(
@@ -51,9 +16,12 @@ pub async fn read(
     panic::set_hook(Box::new(console_error_panic_hook::hook));
     wasm_logger::init(wasm_logger::Config::default());
     let reader: ReadableStreamDefaultReader = stream.get_reader().unchecked_into();
-    let mut buffer = String::new();
-    let mut state = ScannerState::ReadingHead;
-    let mut binding_buffer: Vec<Binding> = Vec::with_capacity(batch_size);
+    let mut parser = Parser {
+        input_buffer: String::new(),
+        binding_buffer: Vec::with_capacity(batch_size),
+        scanner_state: ScannerState::ReadingHead,
+        batch_size,
+    };
 
     loop {
         let chunk = wasm_bindgen_futures::JsFuture::from(reader.read()).await?;
@@ -61,57 +29,119 @@ pub async fn read(
             .as_bool()
             .unwrap_or(false)
         {
-            if !binding_buffer.is_empty() {
-                callback.call1(
-                    &JsValue::NULL,
-                    &serde_wasm_bindgen::to_value(&binding_buffer)?,
-                )?;
-            }
             break;
         }
         let value = Uint8Array::new(&js_sys::Reflect::get(&chunk, &JsValue::from_str("value"))?);
         let value_string = String::from_utf8(value.to_vec())
             .map_err(|err| JsValue::from_str(&format!("utf8 error: {err}")))?;
         for chr in value_string.chars() {
-            buffer.push(chr);
-            match (chr, &state) {
-                ('}', ScannerState::ReadingHead) => {
-                    buffer.push('}');
-                    let header: Header = serde_json::from_str(&buffer)
-                        .map_err(|err| JsValue::from_str(&format!("JSON parse error: {err}")))?;
-                    callback.call1(&JsValue::NULL, &serde_wasm_bindgen::to_value(&header)?)?;
-                    state = ScannerState::SearchingBindings;
-                }
-                ('}', ScannerState::ReadingBinding(1)) => {
-                    let binding: Binding = serde_json::from_str(&buffer)
-                        .map_err(|err| JsValue::from_str(&format!("JSON parse error: {err}")))?;
-                    binding_buffer.push(binding);
-                    if binding_buffer.len() == batch_size {
-                        callback.call1(
-                            &JsValue::NULL,
-                            &serde_wasm_bindgen::to_value(&binding_buffer)?,
-                        )?;
-                        binding_buffer.clear();
-                    }
-                    state = ScannerState::SearchingBinding;
-                }
-                ('[', ScannerState::SearchingBindings) => {
-                    buffer.clear();
-                    state = ScannerState::ReadingBinding(0)
-                }
-                ('{', ScannerState::SearchingBinding) => {
-                    buffer = "{".to_string();
-                    state = ScannerState::ReadingBinding(1)
-                }
-                ('{', ScannerState::ReadingBinding(depth)) => {
-                    state = ScannerState::ReadingBinding(depth + 1)
-                }
-                ('}', ScannerState::ReadingBinding(depth)) => {
-                    state = ScannerState::ReadingBinding(depth - 1)
-                }
-                _ => {}
-            }
+            parser.read_char(chr, |v| {
+                callback.call1(&JsValue::NULL, &serde_wasm_bindgen::to_value(v)?)?;
+                Ok(())
+            })?;
         }
     }
+    if !parser.binding_buffer.is_empty() {
+        callback.call1(
+            &JsValue::NULL,
+            &serde_wasm_bindgen::to_value(&parser.binding_buffer)?,
+        )?;
+    }
     Ok(())
+}
+
+pub struct Parser {
+    scanner_state: ScannerState,
+    input_buffer: String,
+    binding_buffer: Vec<Binding>,
+    batch_size: usize,
+}
+
+impl Parser {
+    pub fn new(batch_size: usize) -> Self {
+        Self {
+            scanner_state: ScannerState::ReadingHead,
+            input_buffer: String::new(),
+            binding_buffer: Vec::with_capacity(batch_size),
+            batch_size,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ScannerState {
+    ReadingHead,
+    SearchingBindings,
+    SearchingBinding,
+    ReadingBinding(u8),
+    ReadingString(u8),
+    ReadingStringEscaped(u8),
+    Done,
+}
+
+impl Parser {
+    pub fn read_char<F>(&mut self, chr: char, callback: F) -> Result<(), JsValue>
+    where
+        F: Fn(&Vec<Binding>) -> Result<(), JsValue>,
+    {
+        self.input_buffer.push(chr);
+        println!("{:?}", (chr, &self.scanner_state));
+        match (chr, &self.scanner_state) {
+            ('}', ScannerState::ReadingHead) => {
+                self.input_buffer.push('}');
+                let header: Header = serde_json::from_str(&self.input_buffer).unwrap();
+                // .map_err(|err| JsValue::from_str(&format!("JSON parse error: {err}")))?;
+                // callback(&header);
+                // callback.call1(&JsValue::NULL, &serde_wasm_bindgen::to_value(&header)?)?;
+                self.scanner_state = ScannerState::SearchingBindings;
+            }
+            ('}', ScannerState::ReadingBinding(1)) => {
+                println!("{}", self.input_buffer);
+                let binding: Binding = serde_json::from_str(&self.input_buffer).unwrap();
+                // .map_err(|err| JsValue::from_str(&format!("JSON parse error: {err}")))?;
+                self.binding_buffer.push(binding);
+                if self.binding_buffer.len() == self.batch_size {
+                    callback(&self.binding_buffer)?;
+                    // callback.call1(
+                    //     &JsValue::NULL,
+                    //     &serde_wasm_bindgen::to_value(&self.binding_buffer)?,
+                    // )?;
+                    self.binding_buffer.clear();
+                }
+                self.scanner_state = ScannerState::SearchingBinding;
+            }
+            ('[', ScannerState::SearchingBindings) => {
+                self.input_buffer.clear();
+                self.scanner_state = ScannerState::SearchingBinding;
+            }
+            ('{', ScannerState::SearchingBinding) => {
+                self.input_buffer = "{".to_string();
+                self.scanner_state = ScannerState::ReadingBinding(1);
+            }
+            ('{', ScannerState::ReadingBinding(depth)) => {
+                self.scanner_state = ScannerState::ReadingBinding(depth + 1);
+            }
+            ('}', ScannerState::ReadingBinding(depth)) => {
+                self.scanner_state = ScannerState::ReadingBinding(depth - 1);
+            }
+            ('"', ScannerState::ReadingBinding(depth)) => {
+                self.scanner_state = ScannerState::ReadingString(*depth);
+            }
+            ('"', ScannerState::ReadingString(depth)) => {
+                self.scanner_state = ScannerState::ReadingBinding(*depth);
+            }
+            ('\\', ScannerState::ReadingString(depth)) => {
+                self.scanner_state = ScannerState::ReadingStringEscaped(*depth);
+            }
+            ('"', ScannerState::ReadingStringEscaped(depth)) => {
+                self.scanner_state = ScannerState::ReadingString(*depth);
+            }
+            (']', ScannerState::SearchingBinding) => {
+                self.input_buffer.clear();
+                self.scanner_state = ScannerState::Done;
+            }
+            _ => {}
+        };
+        Ok(())
+    }
 }
