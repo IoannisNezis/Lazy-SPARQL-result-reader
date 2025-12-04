@@ -63,7 +63,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 pub async fn read(
     stream: ReadableStream,
     batch_size: usize,
-    callback: Function,
+    callback: &Function,
 ) -> Result<(), JsValue> {
     panic::set_hook(Box::new(console_error_panic_hook::hook));
     wasm_logger::init(wasm_logger::Config::default());
