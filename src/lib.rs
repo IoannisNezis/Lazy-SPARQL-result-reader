@@ -54,8 +54,6 @@ pub async fn read<F: Fn(&ParsedChunk)>(
 #[cfg(target_arch = "wasm32")]
 use js_sys::Function;
 #[cfg(target_arch = "wasm32")]
-use std::panic;
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
 #[cfg(target_arch = "wasm32")]
@@ -65,8 +63,6 @@ pub async fn read(
     batch_size: usize,
     callback: &Function,
 ) -> Result<(), JsValue> {
-    panic::set_hook(Box::new(console_error_panic_hook::hook));
-    wasm_logger::init(wasm_logger::Config::default());
     let reader: ReadableStreamDefaultReader = stream.get_reader().unchecked_into();
     let mut parser = Parser::new(batch_size);
 
