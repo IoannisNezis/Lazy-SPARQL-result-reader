@@ -5,26 +5,26 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct SparqlResult {
-    head: Head,
-    results: Bindings,
+    pub head: Head,
+    pub results: Bindings,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-struct Bindings {
-    bindings: Vec<Binding>,
+pub struct Bindings {
+    pub bindings: Vec<Binding>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Header {
-    head: Head,
+    pub head: Head,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-struct Head {
-    vars: Vec<String>,
+pub struct Head {
+    pub vars: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
