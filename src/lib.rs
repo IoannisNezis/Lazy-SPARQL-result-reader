@@ -1,7 +1,7 @@
 pub mod parser;
 pub mod sparql;
 
-use crate::parser::{ParsedChunk, Parser};
+use crate::parser::{Parser, PartialResult};
 use js_sys::Uint8Array;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{ReadableStream, ReadableStreamDefaultReader};
@@ -13,8 +13,8 @@ pub enum SparqlResultReaderError {
     JsonParseError(String),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub async fn read<F: Fn(&ParsedChunk)>(
+#[cfg(feature = "call_from_rust")]
+pub async fn read<F: AsyncFn(PartialResult)>(
     stream: ReadableStream,
     batch_size: usize,
     callback: F,
@@ -42,21 +42,21 @@ pub async fn read<F: Fn(&ParsedChunk)>(
         for chr in value_string.chars() {
             parser
                 .read_char(chr, &callback)
+                .await
                 .map_err(|err| SparqlResultReaderError::JsonParseError(err.to_string()))?;
         }
     }
     if let Some(chunk) = parser.flush() {
-        callback(&chunk);
+        callback(chunk).await;
     }
     Ok(())
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(feature = "call_from_rust"))]
 use js_sys::Function;
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(feature = "call_from_rust"))]
 use wasm_bindgen::prelude::wasm_bindgen;
-
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(feature = "call_from_rust"))]
 #[wasm_bindgen]
 pub async fn read(
     stream: ReadableStream,
@@ -83,16 +83,17 @@ pub async fn read(
                     callback
                         .call1(
                             &JsValue::NULL,
-                            &serde_wasm_bindgen::to_value(v)
+                            &serde_wasm_bindgen::to_value(&v)
                                 .expect("Every ParsedChunk should be serialiable"),
                         )
                         .expect("The JS function should not throw an error");
                 })
+                .await
                 .map_err(|err| JsValue::from_str(&format!("JSON parse error: {err}")))?;
         }
     }
 
-    if let Some(ParsedChunk::Bindings(bindings)) = parser.flush() {
+    if let Some(PartialResult::Bindings(bindings)) = parser.flush() {
         callback.call1(&JsValue::NULL, &serde_wasm_bindgen::to_value(&bindings)?)?;
     }
     Ok(())

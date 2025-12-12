@@ -33,11 +33,13 @@ pub struct Binding(HashMap<String, RDFValue>);
 
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "kebab-case")]
 pub enum RDFValue {
     Uri {
         value: String,
     },
+    // NOTE: Virtuoso responds with these types.
+    #[serde(alias = "typed-literal")]
     Literal {
         value: String,
         #[serde(rename = "xml:lang", skip_serializing_if = "Option::is_none")]

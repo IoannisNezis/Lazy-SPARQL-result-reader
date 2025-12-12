@@ -1,6 +1,6 @@
 [package]
 name = "lazy-sparql-result-reader"
-version = "1.2.0"
+version = "1.2.1"
 description = "A lazy sparql result reader"
 license-file = "LICENSE"
 repository = "https://github.com/IoannisNezis/Lazy-SPARQL-result-reader"
@@ -23,3 +23,6 @@ web-sys = { version = "0.3.83", features = [
 	"ReadableStreamDefaultReader",
 ] }
 arbitrary = { version = "1", optional = true, features = ["derive"] }
+
+[features]
+call_from_rust = []

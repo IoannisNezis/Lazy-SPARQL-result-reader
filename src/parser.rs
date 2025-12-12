@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::sparql::{Binding, Header};
 
@@ -20,8 +20,8 @@ impl Parser {
     }
 
     /// Returins the remaining bindings, consuming the parser.
-    pub fn flush(self) -> Option<ParsedChunk> {
-        (!self.binding_buffer.is_empty()).then_some(ParsedChunk::Bindings(self.binding_buffer))
+    pub fn flush(self) -> Option<PartialResult> {
+        (!self.binding_buffer.is_empty()).then_some(PartialResult::Bindings(self.binding_buffer))
     }
 }
 
@@ -36,16 +36,17 @@ enum ScannerState {
     Done,
 }
 
-#[derive(Debug, Serialize)]
-pub enum ParsedChunk {
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PartialResult {
     Header(Header),
     Bindings(Vec<Binding>),
 }
 
 impl Parser {
-    pub fn read_char<F>(&mut self, chr: char, callback: F) -> Result<(), serde_json::Error>
+    pub async fn read_char<F>(&mut self, chr: char, callback: F) -> Result<(), serde_json::Error>
     where
-        F: Fn(&ParsedChunk) -> (),
+        F: AsyncFn(PartialResult) -> (),
     {
         self.input_buffer.push(chr);
         let current_state = self.scanner_state.clone();
@@ -53,7 +54,7 @@ impl Parser {
             ('}', ScannerState::ReadingHead) => {
                 self.input_buffer.push('}');
                 let header: Header = serde_json::from_str(&self.input_buffer)?;
-                callback(&ParsedChunk::Header(header));
+                callback(PartialResult::Header(header)).await;
                 self.scanner_state = ScannerState::SearchingBindings;
             }
             ('}', ScannerState::ReadingBinding(1)) => {
@@ -61,7 +62,7 @@ impl Parser {
                 self.binding_buffer.push(binding);
                 if self.binding_buffer.len() == self.batch_size {
                     let bindings = std::mem::take(&mut self.binding_buffer);
-                    callback(&ParsedChunk::Bindings(bindings));
+                    callback(PartialResult::Bindings(bindings)).await;
                 }
                 self.scanner_state = ScannerState::SearchingBinding;
             }
