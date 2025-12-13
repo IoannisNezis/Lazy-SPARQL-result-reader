@@ -37,6 +37,9 @@ pub struct Binding(HashMap<String, RDFValue>);
 pub enum RDFValue {
     Uri {
         value: String,
+        // NOTE: custom field used by Qlue-ls.
+        #[serde(skip_deserializing)]
+        curie: Option<String>,
     },
     // NOTE: Virtuoso responds with these types.
     #[serde(alias = "typed-literal")]
