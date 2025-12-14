@@ -65,7 +65,8 @@ impl Parser {
             }
             ('}', ScannerState::ReadingBinding(1)) => {
                 bindings_counter += 1;
-                if bindings_counter > offset && limit.is_none_or(|limit| bindings_counter <= limit)
+                if bindings_counter > offset
+                    && limit.is_none_or(|limit| bindings_counter - offset <= (limit))
                 {
                     let binding: Binding = serde_json::from_str(&self.input_buffer)?;
                     self.binding_buffer.push(binding);
