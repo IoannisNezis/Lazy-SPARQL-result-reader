@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::sparql::{Binding, Header};
+use crate::sparql::{Binding, Header, Meta};
 
 pub struct Parser {
     scanner_state: ScannerState,
@@ -33,6 +33,8 @@ enum ScannerState {
     ReadingBinding(u8),
     ReadingString(Box<ScannerState>),
     ReadingStringEscaped(Box<ScannerState>),
+    SearchchingMeta,
+    ReadingMeta,
     Done,
 }
 
@@ -41,30 +43,38 @@ enum ScannerState {
 pub enum PartialResult {
     Header(Header),
     Bindings(Vec<Binding>),
+    Meta(Meta),
 }
 
 impl Parser {
-    pub async fn read_char<F>(&mut self, chr: char, callback: F) -> Result<(), serde_json::Error>
-    where
-        F: AsyncFn(PartialResult) -> (),
-    {
+    pub fn read_char(
+        &mut self,
+        chr: char,
+        limit: Option<usize>,
+        offset: usize,
+    ) -> Result<Option<PartialResult>, serde_json::Error> {
         self.input_buffer.push(chr);
         let current_state = self.scanner_state.clone();
+        let mut bindings_counter = 0;
         match (chr, current_state) {
             ('}', ScannerState::ReadingHead) => {
                 self.input_buffer.push('}');
                 let header: Header = serde_json::from_str(&self.input_buffer)?;
-                callback(PartialResult::Header(header)).await;
                 self.scanner_state = ScannerState::SearchingBindings;
+                return Ok(Some(PartialResult::Header(header)));
             }
             ('}', ScannerState::ReadingBinding(1)) => {
-                let binding: Binding = serde_json::from_str(&self.input_buffer)?;
-                self.binding_buffer.push(binding);
-                if self.binding_buffer.len() == self.batch_size {
-                    let bindings = std::mem::take(&mut self.binding_buffer);
-                    callback(PartialResult::Bindings(bindings)).await;
+                bindings_counter += 1;
+                if bindings_counter > offset && limit.is_none_or(|limit| bindings_counter <= limit)
+                {
+                    let binding: Binding = serde_json::from_str(&self.input_buffer)?;
+                    self.binding_buffer.push(binding);
+                    self.scanner_state = ScannerState::SearchingBinding;
+                    if self.binding_buffer.len() == self.batch_size {
+                        let bindings = std::mem::take(&mut self.binding_buffer);
+                        return Ok(Some(PartialResult::Bindings(bindings)));
+                    }
                 }
-                self.scanner_state = ScannerState::SearchingBinding;
             }
             ('[', ScannerState::SearchingBindings) => {
                 self.input_buffer.clear();
@@ -94,11 +104,67 @@ impl Parser {
                 self.scanner_state = ScannerState::ReadingString(prev_state);
             }
             (']', ScannerState::SearchingBinding) => {
+                self.scanner_state = ScannerState::SearchchingMeta;
+            }
+            ('{', ScannerState::SearchchingMeta) => {
                 self.input_buffer.clear();
+                self.input_buffer.push('{');
+                self.scanner_state = ScannerState::ReadingMeta;
+            }
+            ('}', ScannerState::ReadingMeta) => {
                 self.scanner_state = ScannerState::Done;
+                let meta: Meta = serde_json::from_str(&self.input_buffer)?;
+                return Ok(Some(PartialResult::Meta(meta)));
             }
             _ => {}
         };
-        Ok(())
+        Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::collections::HashMap;
+
+    use crate::{
+        parser::{Parser, PartialResult},
+        sparql::{Binding, Bindings, Head, Header, Meta, RDFValue, SparqlResult},
+    };
+
+    #[test]
+    fn parser_schema() {
+        let input = r#"{"head":{"vars":[]},"results":{"bindings":[{"":{"type":"uri","value":""},"U*":{"type":"uri","value":"*\"","curie":""}}]},"meta":{"query-time-ms":0,"result-size-total":0}}"#;
+        let serde_parsed_result: SparqlResult = serde_json::from_str(&input).unwrap();
+
+        let mut parsed_result = SparqlResult {
+            head: Head { vars: Vec::new() },
+            results: Bindings {
+                bindings: Vec::new(),
+            },
+            meta: Meta {
+                query_time_ms: 0,
+                result_size_total: 0,
+            },
+        };
+
+        let mut parser = Parser::new(1);
+        for chr in input.chars() {
+            match parser
+                .read_char(chr, None, 0)
+                .expect("Input should be valid")
+            {
+                Some(PartialResult::Header(Header { head })) => parsed_result.head = head,
+                Some(PartialResult::Bindings(bindings)) => {
+                    parsed_result.results.bindings.extend(bindings);
+                }
+                Some(PartialResult::Meta(meta)) => parsed_result.meta = meta,
+                None => {}
+            }
+        }
+
+        assert_eq!(
+            serde_parsed_result, parsed_result,
+            "parser failed for this input:\n{input}"
+        );
     }
 }

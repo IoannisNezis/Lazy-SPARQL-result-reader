@@ -17,6 +17,8 @@ pub enum SparqlResultReaderError {
 pub async fn read<F: AsyncFn(PartialResult)>(
     stream: ReadableStream,
     batch_size: usize,
+    offset: usize,
+    limit: Option<usize>,
     callback: F,
 ) -> Result<(), SparqlResultReaderError> {
     let reader: ReadableStreamDefaultReader = stream.get_reader().unchecked_into();
@@ -40,10 +42,12 @@ pub async fn read<F: AsyncFn(PartialResult)>(
         let value_string = String::from_utf8(value.to_vec())
             .map_err(|_| SparqlResultReaderError::Utf8EncodingError)?;
         for chr in value_string.chars() {
-            parser
-                .read_char(chr, &callback)
-                .await
-                .map_err(|err| SparqlResultReaderError::JsonParseError(err.to_string()))?;
+            if let Some(partial_result) = parser
+                .read_char(chr, limit, offset)
+                .map_err(|err| SparqlResultReaderError::JsonParseError(err.to_string()))?
+            {
+                callback(partial_result).await;
+            }
         }
     }
     if let Some(chunk) = parser.flush() {
@@ -61,6 +65,8 @@ use wasm_bindgen::prelude::wasm_bindgen;
 pub async fn read(
     stream: ReadableStream,
     batch_size: usize,
+    limit: usize,
+    offset: Option<usize>,
     callback: &Function,
 ) -> Result<(), JsValue> {
     let reader: ReadableStreamDefaultReader = stream.get_reader().unchecked_into();
@@ -78,18 +84,18 @@ pub async fn read(
         let value_string = String::from_utf8(value.to_vec())
             .map_err(|err| JsValue::from_str(&format!("utf8 error: {err}")))?;
         for chr in value_string.chars() {
-            parser
-                .read_char(chr, |v| {
-                    callback
-                        .call1(
-                            &JsValue::NULL,
-                            &serde_wasm_bindgen::to_value(&v)
-                                .expect("Every ParsedChunk should be serialiable"),
-                        )
-                        .expect("The JS function should not throw an error");
-                })
-                .await
-                .map_err(|err| JsValue::from_str(&format!("JSON parse error: {err}")))?;
+            if let Some(partial_result) = parser
+                .read_char(chr, None, 0)
+                .map_err(|err| JsValue::from_str(&format!("JSON parse error: {err}")))?
+            {
+                callback
+                    .call1(
+                        &JsValue::NULL,
+                        &serde_wasm_bindgen::to_value(&partial_result)
+                            .expect("Every ParsedChunk should be serialiable"),
+                    )
+                    .expect("The JS function should not throw an error");
+            }
         }
     }
 
