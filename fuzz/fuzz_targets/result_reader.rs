@@ -20,12 +20,9 @@ fuzz_target!(|result: SparqlResult| {
         },
     };
 
-    let mut parser = Parser::new(1);
-    for chr in input.chars() {
-        match parser
-            .read_char(chr, None, 0)
-            .expect("Input should be valid")
-        {
+    let mut parser = Parser::new(1, None, 0);
+    for byte in input.as_bytes() {
+        match parser.read_byte(*byte).expect("Input should be valid") {
             Some(PartialResult::Header(Header { head })) => parsed_result.head = head,
             Some(PartialResult::Bindings(bindings)) => {
                 parsed_result.results.bindings.extend(bindings)

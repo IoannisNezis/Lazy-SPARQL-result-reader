@@ -9,7 +9,6 @@ use web_sys::{ReadableStream, ReadableStreamDefaultReader};
 #[derive(Debug)]
 pub enum SparqlResultReaderError {
     CorruptStream,
-    Utf8EncodingError,
     JsonParseError(String),
 }
 
@@ -17,12 +16,12 @@ pub enum SparqlResultReaderError {
 pub async fn read<F: AsyncFn(PartialResult)>(
     stream: ReadableStream,
     batch_size: usize,
-    offset: usize,
     limit: Option<usize>,
+    offset: usize,
     callback: F,
 ) -> Result<(), SparqlResultReaderError> {
     let reader: ReadableStreamDefaultReader = stream.get_reader().unchecked_into();
-    let mut parser = Parser::new(batch_size);
+    let mut parser = Parser::new(batch_size, limit, offset);
 
     loop {
         let chunk = wasm_bindgen_futures::JsFuture::from(reader.read())
@@ -35,23 +34,22 @@ pub async fn read<F: AsyncFn(PartialResult)>(
         {
             break;
         }
-        let value = Uint8Array::new(
+        let bytes = Uint8Array::new(
             &js_sys::Reflect::get(&chunk, &JsValue::from_str("value"))
                 .map_err(|_| SparqlResultReaderError::CorruptStream)?,
-        );
-        let value_string = String::from_utf8(value.to_vec())
-            .map_err(|_| SparqlResultReaderError::Utf8EncodingError)?;
-        for chr in value_string.chars() {
+        )
+        .to_vec();
+        for byte in bytes {
             if let Some(partial_result) = parser
-                .read_char(chr, limit, offset)
+                .read_byte(byte)
                 .map_err(|err| SparqlResultReaderError::JsonParseError(err.to_string()))?
             {
                 callback(partial_result).await;
             }
         }
     }
-    if let Some(chunk) = parser.flush() {
-        callback(chunk).await;
+    if let Some(buffered_bindings) = parser.flush() {
+        callback(buffered_bindings).await;
     }
     Ok(())
 }
@@ -65,12 +63,12 @@ use wasm_bindgen::prelude::wasm_bindgen;
 pub async fn read(
     stream: ReadableStream,
     batch_size: usize,
-    limit: usize,
-    offset: Option<usize>,
+    limit: Option<usize>,
+    offset: usize,
     callback: &Function,
 ) -> Result<(), JsValue> {
     let reader: ReadableStreamDefaultReader = stream.get_reader().unchecked_into();
-    let mut parser = Parser::new(batch_size);
+    let mut parser = Parser::new(batch_size, limit, offset);
 
     loop {
         let chunk = wasm_bindgen_futures::JsFuture::from(reader.read()).await?;
@@ -80,12 +78,11 @@ pub async fn read(
         {
             break;
         }
-        let value = Uint8Array::new(&js_sys::Reflect::get(&chunk, &JsValue::from_str("value"))?);
-        let value_string = String::from_utf8(value.to_vec())
-            .map_err(|err| JsValue::from_str(&format!("utf8 error: {err}")))?;
-        for chr in value_string.chars() {
+        let bytes =
+            Uint8Array::new(&js_sys::Reflect::get(&chunk, &JsValue::from_str("value"))?).to_vec();
+        for bytes in bytes {
             if let Some(partial_result) = parser
-                .read_char(chr, None, 0)
+                .read_byte(bytes)
                 .map_err(|err| JsValue::from_str(&format!("JSON parse error: {err}")))?
             {
                 callback
