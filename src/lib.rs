@@ -9,6 +9,7 @@ use web_sys::{ReadableStream, ReadableStreamDefaultReader};
 #[derive(Debug)]
 pub enum SparqlResultReaderError {
     CorruptStream,
+    Canceled,
     JsonParseError(String),
 }
 
@@ -26,7 +27,14 @@ pub async fn read<F: AsyncFn(PartialResult)>(
     loop {
         let chunk = wasm_bindgen_futures::JsFuture::from(reader.read())
             .await
-            .map_err(|_| SparqlResultReaderError::CorruptStream)?;
+            .map_err(|err| {
+                let reason = err.as_string();
+                if reason.is_some_and(|reason| reason == "Query was canceled") {
+                    SparqlResultReaderError::Canceled
+                } else {
+                    SparqlResultReaderError::CorruptStream
+                }
+            })?;
         if js_sys::Reflect::get(&chunk, &JsValue::from_str("done"))
             .map_err(|_| SparqlResultReaderError::CorruptStream)?
             .as_bool()
